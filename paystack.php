@@ -52,7 +52,10 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
             ( ($this->payment_params->test_mode == 1) && empty($this->payment_params->test_auth_key) ) ||
             ( ($this->payment_params->test_mode == 0) && empty($this->payment_params->live_auth_key) )
         ) {
-            $this->app->enqueueMessage("Your vendor's Paystack payment configurations seem to be incomplete but your order has been created.<br />Please contact the site administrator to fix this");
+            $this->app->enqueueMessage(
+                "We are unable to process your payment via Paystack at this time, but your order has been created.<br /> 
+                Please contact the site administrator for assistance."
+            );
         }
         else {
             // get customer (for email)
@@ -71,8 +74,7 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
             $params = array(
                 'amount' => $amount,
                 'email' => $user->email,
-                'reference' => $reference,
-                //'callback_url' => $callbackUrl,
+                'reference' => $reference
             );
             
             $url = $this->getAuthorizationUrl($params);
