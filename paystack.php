@@ -62,23 +62,22 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
             $user = JFactory::getUser();
             
             // paystack needs amount in kobo
-            $amount = $order->order_full_price * 100;
+            $amount = round($order->order_full_price, 2) * 100;
             
             // callback url
-            $callbackUrl = htmlspecialchars(HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify&notif_payment='.$this->name.'&tmpl=component');
+            $callbackUrl = HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=notify&notif_payment='.$this->name.'&tmpl=component';
 
             // generate reference
             $reference = $this->generateReference($order);
-            
+
             // get authorization url
-            $params = array(
-                'amount' => $amount,
+            $url = $this->getAuthorizationUrl([
+                'amount' => (string)$amount,
                 'email' => $user->email,
-                'reference' => $reference
-            );
-            
-            $url = $this->getAuthorizationUrl($params);
-            
+                'reference' => $reference,
+                'callback_url' => $callbackUrl
+            ]);
+
             // if we got the url, redirect there
             if ($url !== false) {
                 $this->app->redirect($url);
@@ -94,8 +93,6 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
     
     public function generateReference($order)
     {
-        $cart = $order->cart;
-        
         return base64_encode($order->order_id.":".$order->order_number.":".$order->order_created.":".$order->order_full_price);
     }
     
@@ -111,7 +108,7 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params));
         curl_setopt($ch, CURLOPT_URL, self::PAYSTACK_STANDARD_API_URL);
-        
+
         $result = curl_exec($ch);
         
         if ($result === false) {
@@ -159,26 +156,25 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
             
             $data[$key] = $value;
         }
-        
+
         if (isset($data['trxref'])) {
-            
             $status = $this->verifyPayment($data['trxref']);
-            
+
             $orderData = explode(':', base64_decode($data['trxref']));
             $orderId = $orderData[0];
-            
             if ($status === true) {
-                
                 // change the order status
                 $this->modifyOrder($orderId, $this->payment_params->verified_status, true, true);
                 
                 if ($this->payment_params->redirect_url) {
                     $this->app->redirect($this->payment_params->redirect_url);
                 }
-                $this->app->redirect(htmlspecialchars(HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=after_end&order_id='.$orderId));
+
+                return $this->app->redirect(HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=checkout&task=after_end&order_id='.$orderId);
             } else {
                 $this->app->enqueueMessage("We were unable to verify your transaction.<br />If you have already completed the payment process on Paystack, please contact the site administrator for assistance", 'error');
-                return false;
+                
+                return $this->app->redirect(HIKASHOP_LIVE . 'index.php?option=com_hikashop&ctrl=order&task=cancel_order');
             }
         }
     
@@ -188,15 +184,13 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
     }
     
     
-    public function verifyPayment($reference) {
-        
+    public function verifyPayment($reference) {    
         {// found that you could do this without penalties :)
             // extract order data to load plugin config
             $orderData = explode(':', base64_decode($reference));
             
-            // offset 0 should contain order_id, 2 should contain the order_full_price
+            // offset 0 should contain order_id
             $orderId = $orderData[0];
-            $orderFullPrice = $orderData[2];
             
             // load plugin params and order details
             $dbOrder = $this->getOrder($orderId);
@@ -207,18 +201,16 @@ class plgHikashoppaymentPaystack extends hikashopPaymentPlugin
 
         $result = $this->getPaymentInfo($reference);
         
-        $data = @json_decode($result);
-        
-        if (is_object($data)) {
-            if (property_exists($data, 'status')) {
-                if ($data->status == true) {
-                    
-                    // compare order price to amount paid
-                    $amountPaid = $data->data->amount / 100; // paystack sends amount in kobo
-                    
-                    if (($amountPaid - $dbOrder->order_full_price) >= 0) {
-                        return true;
-                    }
+        $result = @json_decode($result);
+
+        if (is_object($result) && property_exists($result, 'status')) {
+            if ($result->data->status === 'success') {
+                // compare order price to amount paid
+                $amountPaid = $result->data->amount / 100; // paystack sends amount in kobo
+                $orderFullPrice = round($dbOrder->order_full_price, 2);
+
+                if (($amountPaid - $orderFullPrice) >= 0) {
+                    return true;
                 }
             }
         }
